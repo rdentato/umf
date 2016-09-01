@@ -13,33 +13,7 @@
 */
 
 #include "umf.h"
-
-/* Debugging macros */
-#ifdef DEBUG
-#define dbgmsg(...) ((fflush(stdout), fprintf(stderr,"# "),\
-                      fprintf(stderr,__VA_ARGS__), fflush(stderr)))
-
-#define dbgdmp(p,l) do { uint8_t *q=p; int16_t k=l;\
-                      fflush(stdout); fprintf(stderr,"# ");\
-                      while (k-- > 0) fprintf(stderr,"%02X ",*q++);\
-                      fprintf(stderr,"\n"); fflush(stderr);\
-                    } while(0)
-
-#define dbgif(x,y) if x y
-
-#else
-
-#define dbgmsg(...)
-#define dbgdmp(p,l)
-#define dbgif(x,y)
-
-#endif /* DEBUG */
-
-#define _dbgmsg(...)
-#define _dbgdmp(p,l)
-#define _dbgif(x,y)
-
-
+#include "utl.h"
 
 
 #define MThd 0x4d546864
@@ -135,38 +109,20 @@ static uint8_t *readmsg(mf_reader *mfile, int32_t n)
   return mfile->chrbuf;
 }
 
+/*
+** This is the FSM used to scan the midi file
 
-/* == Finite State Machines
-**
-**   These macros provide a simple mechanism for defining
-** finite state machines (FSM).
-**
-**   Each state containse a block of instructions:
-**
-** | STATE(state_name) {
-** |   ... C instructions ...
-** | }
-**
-**   To move from a state to another you use the GOTO macro:
-**
-** | if (c == '*') GOTO(stars);
-**
-** or, in case of an error) the FAIL(x) macro:
-**
-** | if (c == '?') FAIL(404);  ... 404 is an error code
-**
-**   There must be two special states states: ON_FAIL and ON_END
-**
+                           .-------.
+                           v        \
+    mthd -> mtrk -----> event -> midi_evt
+            ^    .------^ / \
+            |   /        /   |
+            \  /        /    v
+           sys_evt <---'   meta_evt  
+              ^              /
+              |             /
+              '------------'      
 */
-
-#define STATE(x)     x##_: if (0) goto x##_;
-#define GOTO(x)      goto x##_
-#define FAIL(e)      do {ERROR = e; goto fail_; } while(0)
-#define ON_FAIL      fail_:
-#define ON_END       FINAL_:
-#define FINAL        FINAL_
-#define GOTOEND      GOTO(FINAL)
-#define FALLTHROUGH  do {ERROR=ERROR;} while (0)
 
 int16_t mf_scan(mf_reader *mfile)
 {
@@ -181,99 +137,101 @@ int16_t mf_scan(mf_reader *mfile)
   uint8_t *msg;
   int32_t chan;
 
-  STATE(mthd) {
-    if (readnum(mfile, 4) != MThd) FAIL(110);
-    tmp = readnum(mfile, 4); /* chunk length */
-    if (tmp < 6) FAIL(111);
-    v1 = readnum(mfile,2);
-    ntracks = readnum(mfile,2);
-    v2 = readnum(mfile,2);
-    ERROR = mfile->on_header(v1, ntracks, v2);
-    if (ERROR) FAIL(ERROR);
-    if (tmp > 6) readnum(mfile,tmp-6);
-    GOTO(mtrk);
-  }
-
-  STATE(mtrk) {
-    if (curtrack++ == ntracks) GOTOEND;
-    if (readnum(mfile,4) != MTrk) FAIL(120);
-    tracklen = readnum(mfile,4);
-    if (tracklen < 0) FAIL(121);
-    track_time = 0;
-    status = 0;
-    ERROR = mfile->on_track(0, curtrack, tracklen);
-    if (ERROR) FAIL(ERROR);
-    GOTO(event);
-  }
-
-  STATE(event) {
-    tmp = readnum(mfile,0); if (tmp < 0) FAIL(211);
-    track_time += tmp;
-
-    tmp = readnum(mfile,1); if (tmp < 0) FAIL(212);
-
-    if ((tmp & 0x80) == 0) {
-      if (status == 0) FAIL(223); /* running status not allowed! */
-      GOTO(midi_evt);
+  fsm {
+    fsmSTATE(mthd) {
+      if (readnum(mfile, 4) != MThd) {ERROR = 110; fsmGOTO(fail);};
+      tmp = readnum(mfile, 4); /* chunk length */
+      if (tmp < 6) {ERROR = 111; fsmGOTO(fail);};
+      v1 = readnum(mfile,2);
+      ntracks = readnum(mfile,2);
+      v2 = readnum(mfile,2);
+      ERROR = mfile->on_header(v1, ntracks, v2);
+      if (ERROR) fsmGOTO(fail);
+      if (tmp > 6) readnum(mfile,tmp-6);
+      fsmGOTO(mtrk);
     }
-
-    status = tmp;
-    v1 = -1;
-    if (status == 0xFF) GOTO(meta_evt);
-    if (status == 0xF0) GOTO(sys_evt);
-    if (status == 0xF7) GOTO(sys_evt);
-    if (status >  0xF0) FAIL(543);
-    tmp = readnum(mfile,1);
-    GOTO(midi_evt);
-  }
-
-  STATE(midi_evt) {
-    chan = 1+(status & 0x0F);
-    v1 = tmp;
-    v2 = -1;
-    if (mf_numparms(status) == 2) {
-      v2 = readnum(mfile,1);
-      if (v2 < 0) FAIL(212);
+    
+    fsmSTATE(mtrk) {
+      if (curtrack++ == ntracks) fsmGOTO(end);
+      if (readnum(mfile,4) != MTrk) {ERROR=120; fsmGOTO(fail); }
+      tracklen = readnum(mfile,4);
+      if (tracklen < 0) {ERROR=121; fsmGOTO(fail); }
+      track_time = 0;
+      status = 0;
+      ERROR = mfile->on_track(0, curtrack, tracklen);
+      if (ERROR) fsmGOTO(fail);
+      fsmGOTO(event);
     }
-    ERROR = mfile->on_midi_evt(track_time, status & 0xF0, chan, v1, v2);
-    if (ERROR) FAIL(ERROR);
-
-    GOTO(event);
-  }
-
-  STATE(meta_evt) {
-    v1 = readnum(mfile,1);
-    if (v1 < 0) FAIL(214);
-    GOTO(sys_evt);
-  }
-
-  STATE(sys_evt) {
-    v2 = readnum(mfile,0);
-    if (v2 < 0) FAIL(215);
-
-    msg = readmsg(mfile,v2);
-    if (msg == NULL) FAIL(216);
-
-    if (v1 == me_end_of_track) {
-      ERROR = mfile->on_track(1, curtrack, track_time);
-      if (ERROR) FAIL(ERROR);
-      GOTO(mtrk);
+    
+    fsmSTATE(event) {
+      tmp = readnum(mfile,0); if (tmp < 0) {ERROR=211; fsmGOTO(fail); }
+      track_time += tmp;
+    
+      tmp = readnum(mfile,1); if (tmp < 0) {ERROR=212; fsmGOTO(fail); }
+    
+      if ((tmp & 0x80) == 0) {
+        if (status == 0) {ERROR=223; fsmGOTO(fail); } /* running status not allowed! */
+        fsmGOTO(midi_evt);
+      }
+    
+      status = tmp;
+      v1 = -1;
+      if (status == 0xFF) fsmGOTO(meta_evt);
+      if (status == 0xF0) fsmGOTO(sys_evt);
+      if (status == 0xF7) fsmGOTO(sys_evt);
+      if (status >  0xF0) {ERROR=543; fsmGOTO(fail); }
+      tmp = readnum(mfile,1);
+      fsmGOTO(midi_evt);
     }
-    ERROR = mfile->on_sys_evt(track_time, status, v1, v2, msg);
-    if (ERROR) FAIL(ERROR);
-    status = 0;
-    GOTO(event);
-  }
-
-  ON_FAIL {
-    if (ERROR < 0) ERROR = -ERROR;
-    mfile->on_error(ERROR, NULL);
-    GOTOEND;
-  }
-
-  ON_END {
-    return ERROR;
-  }
+    
+    fsmSTATE(midi_evt) {
+      chan = 1+(status & 0x0F);
+      v1 = tmp;
+      v2 = -1;
+      if (mf_numparms(status) == 2) {
+        v2 = readnum(mfile,1);
+        if (v2 < 0) {ERROR=212; fsmGOTO(fail); }
+      }
+      ERROR = mfile->on_midi_evt(track_time, status & 0xF0, chan, v1, v2);
+      if (ERROR) fsmGOTO(fail);
+    
+      fsmGOTO(event);
+    }
+    
+    fsmSTATE(meta_evt) {
+      v1 = readnum(mfile,1);
+      if (v1 < 0) {ERROR=214; fsmGOTO(fail); }
+      fsmGOTO(sys_evt);
+    }
+    
+    fsmSTATE(sys_evt) {
+      v2 = readnum(mfile,0);
+      if (v2 < 0) {ERROR=215; fsmGOTO(fail); }
+    
+      msg = readmsg(mfile,v2);
+      if (msg == NULL) {ERROR=216; fsmGOTO(fail); }
+    
+      if (v1 == me_end_of_track) {
+        ERROR = mfile->on_track(1, curtrack, track_time);
+        if (ERROR) fsmGOTO(fail); 
+        fsmGOTO(mtrk);
+      }
+      ERROR = mfile->on_sys_evt(track_time, status, v1, v2, msg);
+      if (ERROR) fsmGOTO(fail); 
+      status = 0;
+      fsmGOTO(event);
+    }
+    
+    fsmSTATE(fail) {
+      if (ERROR < 0) ERROR = -ERROR;
+      mfile->on_error(ERROR, NULL);
+      fsmGOTO(end);
+    }
+    
+    fsmSTATE(end) {
+      return ERROR;
+    }
+  }  
 }
 
 
@@ -411,13 +369,13 @@ static void f_writevar(mf_writer *mw, uint32_t n)
   uint32_t buf;
 
   n &= 0x0FFFFFFF;
-  _dbgmsg("vardata: %08lX -> ", n);
+  _logdebug("vardata: %08lX -> ", n);
 
   buf = n & 0x7F;
   while ((n >>= 7) != 0) {
     buf = (buf << 8) | (n & 0x7F) | 0x80;
   }
-  _dbgmsg("%08lX\n", buf);
+  _logdebug("%08lX\n", buf);
   while (1) {
     eputc(buf & 0xFF);
     if ((buf & 0x80) == 0) break;
@@ -716,14 +674,14 @@ int16_t mf_seq_close(mf_seq *ms)
   }
 
   /*
-  dbgmsg("Events: %d\n", ms->evt_cnt);
+  logdebug("Events: %d\n", ms->evt_cnt);
   dmp_evts(ms);
   */
 
   qsort(ms->evt, ms->evt_cnt,sizeof(mf_evt), evt_cmp);
 
   /*
-  dbgmsg("Events: %d\n", ms->evt_cnt);
+  logdebug("Events: %d\n", ms->evt_cnt);
   dmp_evts(ms);
   */
 
@@ -746,7 +704,7 @@ int16_t mf_seq_close(mf_seq *ms)
 
        nxtk = getlong(p+1);
        delta = nxtk - tick;
-       _dbgmsg("DELTA: (%d-%d) = %d\n", nxtk,tick,delta);
+       _logdebug("DELTA: (%d-%d) = %d\n", nxtk,tick,delta);
        tick = nxtk;
 
        if (p[5] < 0xF0) {
@@ -778,7 +736,7 @@ static int16_t chkbuf(mf_seq *ms, uint32_t spc)
    newsize = ms->buf_max;
    if (newsize == 0) newsize = spc+1;
    
-   _dbgmsg("CHKBUF(: buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
+   _logdebug("CHKBUF(: buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
 
    while (spc >= (newsize - ms->buf_cnt))
       newsize += (newsize /2);
@@ -789,7 +747,7 @@ static int16_t chkbuf(mf_seq *ms, uint32_t spc)
       ms->buf = buf;
       ms->buf_max = newsize;
    }
-   _dbgmsg("CHKBUF): buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
+   _logdebug("CHKBUF): buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
 
    return 0;
 }
@@ -802,7 +760,7 @@ static int16_t chkevt(mf_seq *ms, uint32_t n)
    if (!ms) return 749;
    if (n == 0) return 0;
 
-   _dbgmsg("CHKEVT(: evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
+   _logdebug("CHKEVT(: evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
    newsize = ms->evt_max;
    if (newsize == 0) newsize = n+1;
    
@@ -816,7 +774,7 @@ static int16_t chkevt(mf_seq *ms, uint32_t n)
       ms->evt_max = newsize;
    }
 
-   _dbgmsg("CHKEVT): evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
+   _logdebug("CHKEVT): evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
    return 0;
 }
 
@@ -862,7 +820,7 @@ int16_t mf_seq_evt (mf_seq *ms, uint32_t tick, uint16_t type, uint16_t chan, uin
   int16_t ret = 0;
 
   type &= 0xF0;
-  _dbgmsg("SEQ EVT\n");
+  _logdebug("SEQ EVT\n");
 
   if (!ms)  ret = 759;
   if (!ret) ret = chkbuf(ms,32);
@@ -900,7 +858,7 @@ int16_t mf_seq_sys(mf_seq *ms, uint32_t tick, uint16_t type, uint16_t aux,
   if (!ret) ret = chkevt(ms,1);
   if (!ret) ret = (type >= 0xF0) ? 0 : 778;
   if (!ret) {
-    _dbgmsg("SEQSYS: %d %d\n",ms->curtrack, type);
+    _logdebug("SEQSYS: %d %d\n",ms->curtrack, type);
     add_evt(ms);
 
     add_byte(ms, ms->curtrack);

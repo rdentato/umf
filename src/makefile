@@ -20,17 +20,23 @@ AR=ar -ru
 RM=rm -f
  
 CFLAGS = -DDEBUG -g	
-CFLAGS = 
+CFLAGS = -O2 -DNDEBUG
 
-LIBOBJ=umf.o
+LIBOBJ=umf.o utl.o
+INCLUDE=-I$(UTLPATH)
+
+UTLPATH=../utils/utl
 
 .c.o:
-	$(CC) $(CFLAGS) -c -o $*.o $*.c
+	$(CC) $(CFLAGS) $(INCLUDE) -c -o $*.o $*.c
 
 
 libumf.a : $(LIBOBJ) umf.h
 	$(AR) $@ $(LIBOBJ)
 
+utl.o:
+	$(CC) $(CFLAGS) $(INCLUDE) -c -o utl.o $(UTLPATH)/utl.c
+	
 
 clean:
 	$(RM) libumf.a *.log *.o
