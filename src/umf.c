@@ -110,18 +110,20 @@ static uint8_t *readmsg(mf_reader *mfile, int32_t n)
 }
 
 /*
-** This is the FSM used to scan the midi file
-
-                           .-------.
-                           v        \
-    mthd -> mtrk -----> event -> midi_evt
-            ^    .------^ / \
-            |   /        /   |
-            \  /        /    v
-           sys_evt <---'   meta_evt  
-              ^              /
-              |             /
-              '------------'      
+** This is the FSM used to scan the midi file.
+** mthd is the start state.
+** From any state an error will make it move to the fail state
+**   
+**                              .--------.
+**                              v         \
+**     mthd ---> mtrk ------> event ---> midi_evt
+**               / ^    .------^ / \
+**              /  |   /        /   \
+**     end <---'   \  /        /     v
+**                sys_evt <---'   meta_evt  
+**                   ^              /
+**                   |             /
+**                   '------------'      
 */
 
 int16_t mf_scan(mf_reader *mfile)
@@ -657,8 +659,8 @@ static int evt_cmp(const void *a, const void *b)
 
 int16_t mf_seq_close(mf_seq *ms)
 {
-  int16_t k;
-  int16_t trk = -1;
+  int16_t  k;
+  int16_t  trk = -1;
   uint32_t tick=0;
   uint32_t delta;
   uint32_t nxtk;

@@ -33,8 +33,8 @@ typedef int16_t (*mf_fn_sys_evt ) (uint32_t delta, int16_t type, int16_t aux,
 
 typedef struct {
   FILE            *file        ;
-  uint8_t   *chrbuf            ;
-  uint32_t    chrbuf_sz        ;
+  uint8_t         *chrbuf      ;
+  uint32_t         chrbuf_sz   ;
   mf_fn_error      on_error    ;
   mf_fn_header     on_header   ;
   mf_fn_track      on_track    ;
