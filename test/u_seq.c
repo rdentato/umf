@@ -23,5 +23,9 @@ int main(int argc, char *argv[])
     mf_seq_close(m);
   }
 
+  m = ms_new("zz.mid");
+  if (m) {
+    ms_close(m);    
+  }
 }
 

@@ -22,7 +22,7 @@ RM=rm -f
 CFLAGS = -DDEBUG -g	
 CFLAGS = -O2 -DNDEBUG
 
-LIBOBJ=umf.o utl.o
+LIBOBJ=umf.o
 INCLUDE=-I$(UTLPATH)
 
 UTLPATH=../utils/utl
@@ -33,10 +33,6 @@ UTLPATH=../utils/utl
 
 libumf.a : $(LIBOBJ) umf.h
 	$(AR) $@ $(LIBOBJ)
-
-utl.o:
-	$(CC) $(CFLAGS) $(INCLUDE) -c -o utl.o $(UTLPATH)/utl.c
-	
 
 clean:
 	$(RM) libumf.a *.log *.o

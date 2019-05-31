@@ -13,11 +13,18 @@
 */
 
 #include "umf.h"
-#include "utl.h"
-
+#include "dbg.h"
 
 #define MThd 0x4d546864
 #define MTrk 0x4d54726b
+
+/* ---------------------------- */
+/* You should have only one FSM per function to avoid clash in 
+** state names. It's a limitation but can help keeping things tidy.
+*/
+#define fsm           
+#define fsmGOTO(x)    goto fsm_state_##x
+#define fsmSTATE(x)   fsm_state_##x :
 
 /* *********************************************************
      ooooooooo.   oooooooooooo       .o.       oooooooooo.
@@ -371,13 +378,13 @@ static void f_writevar(mf_writer *mw, uint32_t n)
   uint32_t buf;
 
   n &= 0x0FFFFFFF;
-  _logdebug("vardata: %08lX -> ", n);
+  _dbgmsg("vardata: %08lX -> ", n);
 
   buf = n & 0x7F;
   while ((n >>= 7) != 0) {
     buf = (buf << 8) | (n & 0x7F) | 0x80;
   }
-  _logdebug("%08lX\n", buf);
+  _dbgmsg("%08lX\n", buf);
   while (1) {
     eputc(buf & 0xFF);
     if ((buf & 0x80) == 0) break;
@@ -596,7 +603,16 @@ mf_seq *mf_seq_new (char *fname, uint16_t division)
     if (division == 0) division = (2*2*2*2)*(3*3)*5*7; /* 5040 */
     ms->division = division;
     ms->curtrack = 0;
-
+    for (k=0; k< MS_MAX_TRACKS;k++) {
+       ms->curtick[k]=0;
+       ms->curchan[k]=0;
+       ms->curvel[k]=80;
+       ms->curnote[k]=60;
+       ms->curdur[k] = division;
+    }
+    for (k=0; k<MS_MAX_SAV; k++)
+       ms->savtick[k]=0;
+    ms->cursav = 0;
   }
   return ms;
 }
@@ -676,14 +692,14 @@ int16_t mf_seq_close(mf_seq *ms)
   }
 
   /*
-  logdebug("Events: %d\n", ms->evt_cnt);
+  dbgmsg("Events: %d\n", ms->evt_cnt);
   dmp_evts(ms);
   */
 
   qsort(ms->evt, ms->evt_cnt,sizeof(mf_evt), evt_cmp);
 
   /*
-  logdebug("Events: %d\n", ms->evt_cnt);
+  dbgmsg("Events: %d\n", ms->evt_cnt);
   dmp_evts(ms);
   */
 
@@ -706,7 +722,7 @@ int16_t mf_seq_close(mf_seq *ms)
 
        nxtk = getlong(p+1);
        delta = nxtk - tick;
-       _logdebug("DELTA: (%d-%d) = %d\n", nxtk,tick,delta);
+       _dbgmsg("DELTA: (%d-%d) = %d\n", nxtk,tick,delta);
        tick = nxtk;
 
        if (p[5] < 0xF0) {
@@ -738,7 +754,7 @@ static int16_t chkbuf(mf_seq *ms, uint32_t spc)
    newsize = ms->buf_max;
    if (newsize == 0) newsize = spc+1;
    
-   _logdebug("CHKBUF(: buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
+   _dbgmsg("CHKBUF(: buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
 
    while (spc >= (newsize - ms->buf_cnt))
       newsize += (newsize /2);
@@ -749,7 +765,7 @@ static int16_t chkbuf(mf_seq *ms, uint32_t spc)
       ms->buf = buf;
       ms->buf_max = newsize;
    }
-   _logdebug("CHKBUF): buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
+   _dbgmsg("CHKBUF): buf:%p cnt:%d max:%d need:%d\n", ms->buf, ms->buf_cnt, ms->buf_max,spc);
 
    return 0;
 }
@@ -762,7 +778,7 @@ static int16_t chkevt(mf_seq *ms, uint32_t n)
    if (!ms) return 749;
    if (n == 0) return 0;
 
-   _logdebug("CHKEVT(: evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
+   _dbgmsg("CHKEVT(: evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
    newsize = ms->evt_max;
    if (newsize == 0) newsize = n+1;
    
@@ -776,7 +792,7 @@ static int16_t chkevt(mf_seq *ms, uint32_t n)
       ms->evt_max = newsize;
    }
 
-   _logdebug("CHKEVT): evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
+   _dbgmsg("CHKEVT): evt:%p cnt:%d max:%d need:%d\n", ms->evt, ms->evt_cnt, ms->evt_max,n);
    return 0;
 }
 
@@ -822,7 +838,7 @@ int16_t mf_seq_evt (mf_seq *ms, uint32_t tick, uint16_t type, uint16_t chan, uin
   int16_t ret = 0;
 
   type &= 0xF0;
-  _logdebug("SEQ EVT\n");
+  _dbgmsg("SEQ EVT\n");
 
   if (!ms)  ret = 759;
   if (!ret) ret = chkbuf(ms,32);
@@ -834,13 +850,19 @@ int16_t mf_seq_evt (mf_seq *ms, uint32_t tick, uint16_t type, uint16_t chan, uin
 
     add_byte(ms, ms->curtrack);
     add_ulong(ms,tick);
+    ms->curtick[ms->curtrack] = tick;
 
     chan  &= 0x0F;
     data1 &= 0xFF;
     data2 &= 0xFF;
 
-    /* Force the NoteOff status when NoteOn and Vel=0 */
-    if (type == st_note_on && data2 == 0) type = st_note_off;
+    if (type == st_note_on) {
+      if (data2 == 0) type = st_note_off;
+      else {
+        ms->curnote[ms->curtrack] = data1;
+        ms->curvel[ms->curtrack] = data2;
+      }
+    }
 
     add_byte(ms, type );
     add_byte(ms, chan );
@@ -860,11 +882,12 @@ int16_t mf_seq_sys(mf_seq *ms, uint32_t tick, uint16_t type, uint16_t aux,
   if (!ret) ret = chkevt(ms,1);
   if (!ret) ret = (type >= 0xF0) ? 0 : 778;
   if (!ret) {
-    _logdebug("SEQSYS: %d %d\n",ms->curtrack, type);
+    _dbgmsg("SEQSYS: %d %d\n",ms->curtrack, type);
     add_evt(ms);
 
     add_byte(ms, ms->curtrack);
     add_ulong(ms,tick);
+    ms->curtick[ms->curtrack] = tick;
 
     add_byte(ms,type);
     add_byte(ms,aux);
@@ -908,8 +931,93 @@ int16_t mf_seq_set_keysig(mf_seq *ms, uint32_t tick, int16_t acc, int16_t mi)
   uint8_t buf[4];
 
   buf[0] = (uint8_t)(acc & 0xFF);
-  buf[1] = (uint8_t)(mi  & 0x01);
+  buf[1] = (uint8_t)(!!mi);
   return mf_seq_sys(ms, tick, st_meta_event, me_key_signature, 2, buf);
 }
 
+/*
+** ***********************************************************
+** ***********************************************************
+** ***********************************************************
+*/
+
+mf_seq *ms_m;
+
+#define curtick_(m) ((m)->curtick[(m)->curtrack])
+#define curchan_(m) ((m)->curchan[(m)->curtrack])
+#define curvel_(m)  ((m)->curvel[(m)->curtrack])
+#define curnote_(m) ((m)->curnote[(m)->curtrack])
+#define curdur_(m)  ((m)->curdur[(m)->curtrack])
+
+int16_t ms_note_(mf_seq *ms, uint16_t pitch, uint32_t dur, uint16_t vel)
+{
+  int16_t ret = 0;
+
+  if (!ms) return 810;
+
+  if (pitch == (uint16_t)MS_NOVAL) pitch = curnote_(ms);
+  if (dur == (uint32_t)MS_NOVAL)   dur = curdur_(ms);
+  if (vel == (uint16_t)MS_NOVAL)   vel = curvel_(ms);
+
+  _dbgmsg("NOTE: %d %d %d\n",pitch,dur,vel);
+
+  if (vel > 0) {
+    mf_seq_note_on(ms, curtick_(ms), curchan_(ms), pitch, vel);
+    if (dur > 0) {
+      mf_seq_note_off(ms, curtick_(ms) + dur, curchan_(ms), pitch);
+      curdur_(ms) = dur;
+    }
+  }
+  else 
+      mf_seq_note_off(ms, curtick_(ms), curchan_(ms), pitch);
+
+  return ret;
+}
+
+int16_t ms_rest_(mf_seq *ms, uint32_t dur)
+{
+  if (dur == (uint32_t)MS_NOVAL) dur = curdur_(ms);
+  if (dur>0) {
+    curtick_(ms) += (curdur_(ms) = dur);
+  }
+  return 0;
+}
+
+int16_t ms_track_(mf_seq *ms, uint16_t trk)
+{
+  if (trk < MS_MAX_TRACKS) ms->curtrack = trk;
+  return ms->curtrack;
+}
+
+int16_t ms_channel_(mf_seq *ms, uint16_t chn)
+{
+  if (chn != (uint16_t) MS_NOVAL) curchan_(ms) = chn;
+  return curchan_(ms);
+}
+
+uint32_t ms_setmark_(mf_seq *ms, uint32_t mrk, uint32_t tick)
+{
+  if (tick == MS_NO_TICK)
+    tick = ms->curtick[ms->curtrack];
+  else if (ms_markA <= tick || tick <= ms_markJ)  
+    tick = ms->savtick[tick & 0x0F];
+  mrk = mrk & 0x0F;
+  if (mrk < 10) {
+    ms->savtick[mrk] = tick;
+    ms->cursav = mrk ;
+  }
+  return tick;
+}
+
+uint32_t ms_getmark_(mf_seq *ms, uint32_t mrk)
+{
+  uint32_t tick = ms->curtick[ms->curtrack];
+
+  if (mrk == MS_NO_MARK)  mrk = ms->cursav;
+  mrk = mrk & 0x0F;
+  if (mrk < 10) {
+    tick = ms->savtick[mrk];
+  }
+  return tick;
+}
 

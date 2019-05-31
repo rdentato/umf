@@ -243,10 +243,14 @@ int16_t mf_numparms(int16_t s);
 
 /*****************************/
 
-
 #define mf_type_seq 2
 #define mf_type_msq 3
-#define MF_MAX_TRACKS 32
+
+#define MS_MAX_TRACKS 32
+#define MS_NO_TICK 0xFFFFFFFE
+#define MS_MAX_SAV 10
+#define MS_DIVISION 960
+#define MS_NOVAL -1
 
 typedef struct {
 
@@ -257,6 +261,7 @@ typedef union {
   uint8_t *p;
 } mf_evt;
 
+
 typedef struct {
   uint16_t type;
   uint16_t flags;
@@ -264,10 +269,17 @@ typedef struct {
   uint8_t *buf;  uint32_t buf_cnt;  uint32_t buf_max;
   mf_evt  *evt;  uint32_t evt_cnt;  uint32_t evt_max;
   
-  char  *fname;
+  char    *fname;
   int16_t  division;
   int16_t  curtrack;
-  
+  uint32_t savtick[MS_MAX_SAV];
+  uint32_t curtick[MS_MAX_TRACKS];
+  uint32_t curdur[MS_MAX_TRACKS];
+  uint8_t  curchan[MS_MAX_TRACKS];  
+  uint8_t  curvel[MS_MAX_TRACKS];
+  uint8_t  curnote[MS_MAX_TRACKS];
+  uint16_t cursav;
+
 } mf_seq;  
 
 
@@ -306,6 +318,75 @@ int16_t mf_seq_pitch_bend(mf_seq *ms, uint32_t tick, uint8_t chan, int16_t bend)
 
 /* ****************************** */
 
- 
+
+#define ms_quarter_n     MS_DIVISION
+#define ms_whole_n      (MS_DIVISION * 4)
+#define ms_half_n       (MS_DIVISION * 2)
+#define ms_eigth_n      (MS_DIVISION / 2)
+#define ms_sixteenth_n  (MS_DIVISION / 4)
+
+#define ms_dot(d)   ((d*3)/2)
+#define ms_ddot(d)  ((d*7)/8)
+
+#define ms_new(fn)   mf_seq_new(fn,MS_DIVISION)
+#define ms_close(m)  mf_seq_close(m)
+
+#define ms_expand(x) x
+#define ms_arg0(_x0,...)                                     _x0
+#define ms_arg1(_x0,_x1,...)                                 _x1
+#define ms_arg2(_x0,_x1,_x2,...)                             _x2
+#define ms_arg3(_x0,_x1,_x2,_x3,...)                         _x3
+#define ms_arg4(_x0,_x1,_x2,_x3,_x4,...)                     _x4
+#define ms_arg5(_x0,_x1,_x2,_x3,_x4,_x5,...)                 _x5
+#define ms_arg6(_x0,_x1,_x2,_x3,_x4,_x5,_x6,...)             _x6
+#define ms_arg7(_x0,_x1,_x2,_x3,_x4,_x5,_x6,_x7,...)         _x7
+#define ms_arg8(_x0,_x1,_x2,_x3,_x4,_x5,_x6,_x7,_x8,...)     _x8
+#define ms_arg9(_x0,_x1,_x2,_x3,_x4,_x5,_x6,_x7,_x8,_x9,...) _x9
+
+extern mf_seq *ms_m;
+int16_t ms_note_(mf_seq *ms, uint16_t pitch, uint32_t dur, uint16_t vel);
+
+#define ms_note(...)  (ms_m = ms_arg0(__VA_ARGS__,NULL),  \
+                       ms_note_(ms_m,\
+                   /* pitch   */     ms_arg1(__VA_ARGS__, MS_NOVAL, MS_NOVAL), \
+                   /* duration*/     ms_arg2(__VA_ARGS__, MS_NOVAL, MS_NOVAL, MS_NOVAL), \
+                   /* velocity*/     ms_arg3(__VA_ARGS__, MS_NOVAL, MS_NOVAL, MS_NOVAL, MS_NOVAL)) \
+                         )
+
+int16_t ms_rest_(mf_seq *ms, uint32_t dur);
+#define ms_rest(...)  (ms_m = ms_arg0(__VA_ARGS__,NULL),  \
+                       ms_rest_(ms_m,\
+                   /* duration*/     ms_arg1(__VA_ARGS__, MS_NOVAL, MS_NOVAL)) \
+                         )
+
+int16_t ms_track_(mf_seq *ms, uint16_t trk);
+#define ms_track(...) ms_track_(ms_arg0(__VA_ARGS__,NULL) , \
+                                ms_arg1(__VA_ARGS__, MS_MAX_TRACKS, MS_MAX_TRACKS))
+
+int16_t ms_channel_(mf_seq *ms, uint16_t chn);
+#define ms_channel(...) ms_channel(ms_arg0(__VA_ARGS__,NULL) , \
+                                   ms_arg1(__VA_ARGS__, MS_NOVAL, MS_NOVAL))
+
+#define ms_markA   0xFFFFFFF0
+#define ms_markB   0xFFFFFFF1
+#define ms_markC   0xFFFFFFF2
+#define ms_markD   0xFFFFFFF3
+#define ms_markE   0xFFFFFFF4
+#define ms_markF   0xFFFFFFF5
+#define ms_markG   0xFFFFFFF6
+#define ms_markH   0xFFFFFFF7
+#define ms_markI   0xFFFFFFF8
+#define ms_markJ   0xFFFFFFF9
+#define MS_NO_MARK 0xFFFFFFFE
+
+uint32_t ms_setmark_(mf_seq *ms, uint32_t mrk, uint32_t tick);
+#define ms_setmark(...) ms_setmark_(ms_arg0(__VA_ARGS__,NULL) , \
+                                    ms_arg1(__VA_ARGS__, ms_markA, ms_markA), \
+                                    ms_arg2(__VA_ARGS__, MS_NO_TICK, MS_NO_TICK, MS_NO_TICK))
+
+uint32_t ms_getmark_(mf_seq *ms, uint32_t mrk);
+#define ms_getmark(...) ms_getmark_(ms_arg0(__VA_ARGS__,NULL) , \
+                                    ms_arg1(__VA_ARGS__, MS_NO_MARK, MS_NO_MARK))
+
 
 #endif

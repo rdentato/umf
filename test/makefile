@@ -30,9 +30,11 @@ LIBPATH =-L../src
 .c.o:
 	$(CC) $(CFLAGS) $(INCPATH) -c -o $*.o $*.c
 
-
-all: t_seq$(_EXE) t_write$(_EXE) t_read$(_EXE)
+all: t_seq$(_EXE) t_write$(_EXE) t_read$(_EXE) t_ms$(_EXE)
   
+t_ms$(_EXE): u_ms.o
+	$(LN) -o $@ u_ms.o -lumf
+
 t_seq$(_EXE): u_seq.o
 	$(LN) -o $@ u_seq.o -lumf
 
@@ -41,6 +43,7 @@ t_write$(_EXE): u_write.o
   
 t_read$(_EXE): u_read.o
 	$(LN) -o $@ u_read.o -lumf
+
 
 clean:
 	$(RM) *.log *.o ss.mid xx.mid
