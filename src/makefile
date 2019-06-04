@@ -8,34 +8,9 @@
 
 # This makefile is for GNU tool chain 
 
+%:
+	cd ..; make $@
 
-_EXE=
-
-ifeq ($(SYS),MINGW)
-_EXE=.exe
-endif
-
-CC=gcc
-AR=ar -ru
-RM=rm -f
- 
-CFLAGS = -DDEBUG -g	
-CFLAGS = -O2 -DNDEBUG
-
-LIBOBJ=umf.o
-INCLUDE=-I$(UTLPATH)
-
-UTLPATH=../utils/utl
-
-.c.o:
-	$(CC) $(CFLAGS) $(INCLUDE) -c -o $*.o $*.c
-
-
-libumf.a : $(LIBOBJ) umf.h
-	$(AR) $@ $(LIBOBJ)
-
-clean:
-	$(RM) libumf.a *.log *.o
-
-
+all:
+	cd ..; make
 

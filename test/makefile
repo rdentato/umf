@@ -8,47 +8,9 @@
 
 # This makefile is for GNU tool chain 
 
+%:
+	cd ..; make $@
 
-_EXE=
-
-ifeq ($(SYS),MINGW)
-_EXE=.exe
-endif
-
-CC=gcc
-AR=ar -ru
-LN=gcc $(LIBPATH)
- 
-RM=rm -f
- 
-CFLAGS = -DDEBUG -g	
-CFLAGS = -DDEBUG
-
-INCPATH =-I../src
-LIBPATH =-L../src
-
-.c.o:
-	$(CC) $(CFLAGS) $(INCPATH) -c -o $*.o $*.c
-
-all: t_seq$(_EXE) t_write$(_EXE) t_read$(_EXE) t_ms$(_EXE)
-  
-t_ms$(_EXE): u_ms.o
-	$(LN) -o $@ u_ms.o -lumf
-
-t_seq$(_EXE): u_seq.o
-	$(LN) -o $@ u_seq.o -lumf
-
-t_write$(_EXE): u_write.o
-	$(LN) -o $@ u_write.o -lumf
-  
-t_read$(_EXE): u_read.o
-	$(LN) -o $@ u_read.o -lumf
-
-
-clean:
-	$(RM) *.log *.o ss.mid xx.mid
-	$(RM) t_*
-	$(RM) gmon.out
-
-
+all:
+	cd ..; make
 
