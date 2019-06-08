@@ -2,7 +2,7 @@
 #include "umf.h"
 
 
-int16_t main(int16_t argc, char *argv[])
+int main(int argc, char *argv[])
 {
 
   if (argc > 1) {

@@ -5,18 +5,33 @@
 Description
 ===========
 
+MIDI instrument
+---------------
+From a MIDI protocol standpoint, an instrument has one or more *ports* and each port has sixteen independent *channels*. 
+
+Reading
+-------
+Reading a midifile
+
+Writing
+-------
+
+Sequencer
+---------
 
 
 
-Reference
-=========
+API Reference 
+=============
 
-Reading API
------------
+Reading
+-------
 
-Writing API
------------
+Writing
+-------
 
-Sequencer API
--------------
+Sequencer
+---------
 
+Constants
+---------

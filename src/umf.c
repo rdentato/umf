@@ -1,16 +1,9 @@
 /*
 **  (C) Remo Dentato (rdentato@gmail.com)
-**
-** Permission to use, copy, modify and distribute this code and
-** its documentation for any purpose is hereby granted without
-** fee, provided that the above copyright notice, or equivalent
-** attribution acknowledgement, appears in all copies and
-** supporting documentation.
-**
-** Copyright holder makes no representations about the suitability
-** of this software for any purpose. It is provided "as is" without
-** express or implied warranty.
+**  UMF is distributed under the terms of the MIT License
+**  as detailed in the 'LICENSE' file.
 */
+
 
 #include "umf.h"
 #include "dbg.h"
@@ -18,13 +11,6 @@
 #define MThd 0x4d546864
 #define MTrk 0x4d54726b
 
-/* ---------------------------- */
-/* You should have only one FSM per function to avoid clash in 
-** state names. It's a limitation but can help keeping things tidy.
-*/
-#define fsm           
-#define fsmGOTO(x)    goto fsm_state_##x
-#define fsmSTATE(x)   fsm_state_##x :
 
 /* *********************************************************
      ooooooooo.   oooooooooooo       .o.       oooooooooo.
@@ -133,6 +119,10 @@ static uint8_t *readmsg(mf_reader *mfile, int32_t n)
 **                   '------------'      
 */
 
+#define fsm           
+#define fsmGOTO(x)    goto fsm_state_##x
+#define fsmSTATE(x)   fsm_state_##x :
+
 int16_t mf_scan(mf_reader *mfile)
 {
   int32_t tmp;
@@ -220,7 +210,7 @@ int16_t mf_scan(mf_reader *mfile)
       msg = readmsg(mfile,v2);
       if (msg == NULL) {ERROR=216; fsmGOTO(fail); }
     
-      if (v1 == me_end_of_track) {
+      if (v1 == mf_me_end_of_track) {
         ERROR = mfile->on_track(1, curtrack, track_time);
         if (ERROR) fsmGOTO(fail); 
         fsmGOTO(mtrk);
@@ -478,9 +468,9 @@ int16_t mf_midi_evt (mf_writer *mw, uint32_t delta, int16_t type, int16_t chan,
 
   st = (type & 0xF0);
 
-  if (st == st_system_exclusive)  {return 318; }  /* No sysex accepted here! */
+  if (st == mf_st_system_exclusive)  {return 318; }  /* No sysex accepted here! */
 
-  if (st == st_note_on && data2 == 0) st = st_note_off;
+  if (st == mf_st_note_on && data2 == 0) st = mf_st_note_off;
 
   f_writevar(mw, delta);
   f_write8(mw, st | (chan & 0x0F));
@@ -499,7 +489,7 @@ int16_t mf_sys_evt(mf_writer *mw, uint32_t delta,
 
   f_writevar(mw, delta);
   f_write8(mw, type);
-  if (type == st_meta_event) f_write8(mw, aux);
+  if (type == mf_st_meta_event) f_write8(mw, aux);
   f_writevar(mw, len);
   f_writemsg(mw, len, data );
 
@@ -508,7 +498,7 @@ int16_t mf_sys_evt(mf_writer *mw, uint32_t delta,
 
 int16_t mf_text_evt(mf_writer *mw, uint32_t delta, int16_t type, char *str)
 {
-  return mf_sys_evt(mw, delta, st_meta_event, type & 0x0F, strlen(str), (uint8_t *)str);
+  return mf_sys_evt(mw, delta, mf_st_meta_event, type & 0x0F, strlen(str), (uint8_t *)str);
 }
 
 int16_t mf_close (mf_writer *mw)
@@ -549,7 +539,7 @@ int16_t mf_pitch_bend(mf_writer *mw, uint32_t delta, uint8_t chan, int16_t bend)
 
   bend += 8192;
 
-  return mf_midi_evt(mw, delta, st_pitch_bend, chan, bend, bend  >> 7);
+  return mf_midi_evt(mw, delta, mf_st_pitch_bend, chan, bend, bend  >> 7);
 }
 
 int16_t mf_set_tempo(mf_writer *mw, uint32_t delta, int32_t tempo)
@@ -560,7 +550,7 @@ int16_t mf_set_tempo(mf_writer *mw, uint32_t delta, int32_t tempo)
   buf[1] = (tempo >>  8) & 0xFF;
   buf[2] = (tempo      ) & 0xFF;
 
-  return mf_sys_evt(mw, delta, st_meta_event, me_set_tempo, 3, buf);
+  return mf_sys_evt(mw, delta, mf_st_meta_event, mf_me_set_tempo, 3, buf);
 }
 
 int16_t mf_set_keysig(mf_writer *mw, uint32_t delta, int16_t acc, int16_t mi)
@@ -568,11 +558,34 @@ int16_t mf_set_keysig(mf_writer *mw, uint32_t delta, int16_t acc, int16_t mi)
   uint8_t buf[4];
 
   buf[0] = (uint8_t)(acc & 0xFF);
-  buf[1] = (uint8_t)(mi  & 0x01);
-  return mf_sys_evt(mw, delta, st_meta_event, me_key_signature, 2, buf);
+  buf[1] = (uint8_t)(!!mi);
+  return mf_sys_evt(mw, delta, mf_st_meta_event, mf_me_key_signature, 2, buf);
 }
 
-
+/* C#4 */
+uint8_t mf_pitch_str(char *s)
+{ 
+  uint8_t p=0;
+  if (s && *s) {
+    if ('A' <= *s && *s <= 'G') {
+      p = "\x9\xB\x0\x2\x4\x5\x7"[(*s & 0x07)-1];
+      s++;
+    }
+    if (*s == '#')      {p++;s++;}
+    else if (*s == 'b') {p++;s++;}
+    if ('0' <= *s && *s <= '9') {
+      p += 12 * (1 + *s -'0');
+      s++;
+    }
+    else p += 60;
+    while (*s) {
+      if (*s == '\'' && p <= (127-12)) {p+=12;}
+      if (*s == ','  && p >= (    12)) {p-=12;}
+      s++;
+    }
+  }
+  return p;
+}
 
 /* ******************************************* **
        .oooooo..o oooooooooooo   .oooooo.     
@@ -603,16 +616,17 @@ mf_seq *mf_seq_new (char *fname, uint16_t division)
     if (division == 0) division = (2*2*2*2)*(3*3)*5*7; /* 5040 */
     ms->division = division;
     ms->curtrack = 0;
-    for (k=0; k< MS_MAX_TRACKS;k++) {
+    for (k=0; k < MF_MAX_TRACKS;k++) {
        ms->curtick[k]=0;
        ms->curchan[k]=0;
        ms->curvel[k]=80;
        ms->curnote[k]=60;
        ms->curdur[k] = division;
     }
-    for (k=0; k<MS_MAX_SAV; k++)
+    for (k=0; k<MF_MAX_SAV; k++)
        ms->savtick[k]=0;
     ms->cursav = 0;
+    ms->curevt = MF_NO_EVENT;
   }
   return ms;
 }
@@ -655,11 +669,12 @@ static char *evt_ord = "71023456";
 
 #define evt_cmp_st(x) (evt_ord[((x)>>4) & 0x07])
 
-static int evt_cmp(const void *a, const void *b)
+static uint8_t *evt_base;
+static int evt_cmp_bytrack(const void *a, const void *b)
 {
   int      ret = 0;
-  uint8_t *pa = ((mf_evt *)a)->p;
-  uint8_t *pb = ((mf_evt *)b)->p;
+  uint8_t *pa = evt_base + *((uint32_t *)a);
+  uint8_t *pb = evt_base + *((uint32_t *)b);
 
   /* This works only because we represented ticks in a special way*/
   if (!(ret = pa[0]-pb[0]))
@@ -673,6 +688,77 @@ static int evt_cmp(const void *a, const void *b)
   return ret;
 }
 
+int16_t mf_seq_bytrack(mf_seq *ms)
+{
+
+  /*
+  dbgmsg("Events: %d\n", ms->evt_cnt);
+  dmp_evts(ms);
+  */
+  if (!ms) return 814;
+
+  evt_base = ms->buf;
+  qsort(ms->evt, ms->evt_cnt,sizeof(uint32_t), evt_cmp_bytrack);
+  ms->flags &= ~(MF_SORTED_BYTICK | MF_SORTED_BYTRACK);
+  ms->flags |= MF_SORTED_BYTRACK;
+
+  /*
+  dbgmsg("Events: %d\n", ms->evt_cnt);
+  dmp_evts(ms);
+  */
+  return 0;
+}
+
+uint8_t *mf_evt_first(mf_seq *ms)
+{
+  if (!ms || !mf_seq_sorted(ms) || ms->evt_cnt == 0) {
+    ms->curevt = MF_NO_EVENT;
+    return NULL;
+  }
+  ms->curevt=0;
+  return ms->buf+ms->evt[ms->curevt];
+}
+
+uint8_t *mf_evt_next(mf_seq *ms)
+{
+  if (!ms || !mf_seq_sorted(ms) || ms->evt_cnt == 0 ||
+      (ms->curevt+1) >= ms->evt_cnt || ms->curevt == MF_NO_EVENT) {
+    ms->curevt = MF_NO_EVENT;
+    return NULL;
+  }
+  ms->curevt++;
+  return ms->buf+ms->evt[ms->curevt];
+}
+
+uint8_t *mf_evt_prev(mf_seq *ms)
+{
+  if (!ms || !mf_seq_sorted(ms) || ms->evt_cnt == 0 ||
+      ms->curevt == 0 || ms->curevt == MF_NO_EVENT) {
+    ms->curevt = MF_NO_EVENT;
+    return NULL;
+  }
+  ms->curevt--;
+  return ms->buf+ms->evt[ms->curevt];
+}
+
+uint32_t mf_evt_count(mf_seq *ms)
+{  return (ms?ms->evt_cnt:0); }
+
+uint8_t mf_evt_track(uint8_t *e)
+{ return e?*e:0; }
+
+uint32_t mf_evt_tick(uint8_t *e)
+{ return e?getlong(e+1):0;}
+
+uint8_t *mf_evt_data(uint8_t *e)
+{ return e? e+5: NULL;}
+
+uint32_t mf_evt_status(uint8_t *e)
+{ return e? e[5] & 0xF0:0;}
+
+uint32_t mf_evt_channel(uint8_t *e)
+{ return e? e[5] & 0x0F:0;}
+
 int16_t mf_seq_close(mf_seq *ms)
 {
   int16_t  k;
@@ -681,54 +767,40 @@ int16_t mf_seq_close(mf_seq *ms)
   uint32_t delta;
   uint32_t nxtk;
   uint8_t *p;
+  uint8_t *d;
 
   mf_writer *mw;
 
   if (!ms) return 799;
 
-  /* Convert the offset into pointers */
-  for (k=0; k< ms->evt_cnt; k++) {
-    ms->evt[k].p = ms->buf + ms->evt[k].l;
-  }
-
-  /*
-  dbgmsg("Events: %d\n", ms->evt_cnt);
-  dmp_evts(ms);
-  */
-
-  qsort(ms->evt, ms->evt_cnt,sizeof(mf_evt), evt_cmp);
-
-  /*
-  dbgmsg("Events: %d\n", ms->evt_cnt);
-  dmp_evts(ms);
-  */
+  mf_seq_bytrack(ms);
 
   mw = mf_new(ms->fname, ms->division);
 
   if (mw) {
 
-    if (ms->evt_cnt == 0) {
+    if (mf_evt_count(ms) == 0) {
          mf_track_start(mw);
-         mf_sys_evt(mw, 0, st_meta_event, me_text, 5, (uint8_t *)"Empty");
+         mf_sys_evt(mw, 0, mf_st_meta_event, mf_me_text, 5, (uint8_t *)"Empty");
     }
-    else for (k=0; k< ms->evt_cnt; k++) {
-       p = ms->evt[k].p;
+    else for (p = mf_evt_first(ms); p ; p=mf_evt_next(ms)) {
+       // p = ms->buf+ms->evt[k];
 
-       if ((uint8_t)(*p) != trk) {  /* Start a new track */
+       if (mf_evt_track(p) != trk) {  /* Start a new track */
          mf_track_start(mw);
-         trk = *p;
+         trk = mf_evt_track(p);
          tick = 0;
        }
 
-       nxtk = getlong(p+1);
+       nxtk = mf_evt_tick(p);
        delta = nxtk - tick;
        _dbgmsg("DELTA: (%d-%d) = %d\n", nxtk,tick,delta);
        tick = nxtk;
-
-       if (p[5] < 0xF0) {
-         mf_midi_evt(mw, delta, p[5], p[6], p[7],p[8]);
+       d = mf_evt_data(p);
+       if (d && mf_evt_status(p) < 0xF0) {
+         mf_midi_evt(mw, delta, d[0], d[1], d[2],d[3]);
        } else {
-         mf_sys_evt(mw, delta, p[5], p[6], getlong(p+7), p+11);
+         mf_sys_evt(mw, delta, d[0], d[1], getlong(d+2), d+6);
        }
     }
 
@@ -773,7 +845,7 @@ static int16_t chkbuf(mf_seq *ms, uint32_t spc)
 static int16_t chkevt(mf_seq *ms, uint32_t n)
 {
    uint32_t newsize;
-   mf_evt *evt = NULL;
+   uint32_t *evt = NULL;
 
    if (!ms) return 749;
    if (n == 0) return 0;
@@ -786,7 +858,7 @@ static int16_t chkevt(mf_seq *ms, uint32_t n)
       newsize += newsize/2;
 
    if (newsize > ms->evt_max) {
-      evt = realloc(ms->evt, newsize * sizeof(mf_evt));
+      evt = realloc(ms->evt, newsize * sizeof(uint32_t));
       if (!evt) return 740;
       ms->evt = evt;
       ms->evt_max = newsize;
@@ -803,13 +875,21 @@ int16_t mf_seq_set_track(mf_seq *ms, int16_t track)
   return 0;
 }
 
-int16_t mf_seq_get_track(mf_seq *ms, int16_t track)
+int16_t mf_seq_get_track(mf_seq *ms)
 {
   if (!ms) return 789;
   return ms->curtrack;
 }
 
-#define add_evt(ms)    (ms->evt[ms->evt_cnt++].l = ms->buf_cnt)
+
+int16_t mf_seq_track(mf_seq *ms, uint16_t track)
+{
+  if (track < MF_MAX_TRACKS) return mf_seq_set_track(ms,track);
+  return mf_seq_get_track(ms);
+}
+
+
+#define add_evt(ms)    (ms->evt[ms->evt_cnt++] = ms->buf_cnt)
 #define add_byte(ms,b) (ms->buf[ms->buf_cnt++] = (uint8_t)(b))
 
 static void add_data(mf_seq *ms, int32_t l, uint8_t *d)
@@ -856,8 +936,8 @@ int16_t mf_seq_evt (mf_seq *ms, uint32_t tick, uint16_t type, uint16_t chan, uin
     data1 &= 0xFF;
     data2 &= 0xFF;
 
-    if (type == st_note_on) {
-      if (data2 == 0) type = st_note_off;
+    if (type == mf_st_note_on) {
+      if (data2 == 0) type = mf_st_note_off;
       else {
         ms->curnote[ms->curtrack] = data1;
         ms->curvel[ms->curtrack] = data2;
@@ -878,6 +958,7 @@ int16_t mf_seq_sys(mf_seq *ms, uint32_t tick, uint16_t type, uint16_t aux,
   int16_t ret = 0;
 
   if (!ms)  ret = 779;
+  if (len < 0) len = strlen(data);
   if (!ret) ret = chkbuf(ms,32+len);
   if (!ret) ret = chkevt(ms,1);
   if (!ret) ret = (type >= 0xF0) ? 0 : 778;
@@ -899,11 +980,6 @@ int16_t mf_seq_sys(mf_seq *ms, uint32_t tick, uint16_t type, uint16_t aux,
   return ret;
 }
 
-int16_t mf_seq_text(mf_seq *ms, uint32_t tick, uint16_t type, char *txt)
-{
-  return mf_seq_sys(ms, tick, st_meta_event, type & 0x0F, strlen(txt), (uint8_t *)txt);
-}
-
 int16_t mf_seq_pitch_bend(mf_seq *ms, uint32_t tick, uint8_t chan, int16_t bend)
 {/* bend is in the range  -8192 .. 8191 */
 
@@ -912,7 +988,7 @@ int16_t mf_seq_pitch_bend(mf_seq *ms, uint32_t tick, uint8_t chan, int16_t bend)
 
   bend += 8192;
 
-  return mf_seq_evt(ms, tick, st_pitch_bend, chan, bend, bend  >> 7);
+  return mf_seq_evt(ms, tick, mf_st_pitch_bend, chan, bend, bend  >> 7);
 }
 
 int16_t mf_seq_set_tempo(mf_seq *ms, uint32_t tick, int32_t tempo)
@@ -923,7 +999,7 @@ int16_t mf_seq_set_tempo(mf_seq *ms, uint32_t tick, int32_t tempo)
   buf[1] = (tempo >>  8) & 0xFF;
   buf[2] = (tempo      ) & 0xFF;
 
-  return mf_seq_sys(ms, tick, st_meta_event, me_set_tempo, 3, buf);
+  return mf_seq_sys(ms, tick, mf_st_meta_event, mf_me_set_tempo, 3, buf);
 }
 
 int16_t mf_seq_set_keysig(mf_seq *ms, uint32_t tick, int16_t acc, int16_t mi)
@@ -932,8 +1008,9 @@ int16_t mf_seq_set_keysig(mf_seq *ms, uint32_t tick, int16_t acc, int16_t mi)
 
   buf[0] = (uint8_t)(acc & 0xFF);
   buf[1] = (uint8_t)(!!mi);
-  return mf_seq_sys(ms, tick, st_meta_event, me_key_signature, 2, buf);
+  return mf_seq_sys(ms, tick, mf_st_meta_event, mf_me_key_signature, 2, buf);
 }
+
 
 /*
 ** ***********************************************************
@@ -941,7 +1018,6 @@ int16_t mf_seq_set_keysig(mf_seq *ms, uint32_t tick, int16_t acc, int16_t mi)
 ** ***********************************************************
 */
 
-mf_seq *ms_m;
 
 #define curtick_(m) ((m)->curtick[(m)->curtrack])
 #define curchan_(m) ((m)->curchan[(m)->curtrack])
@@ -949,57 +1025,55 @@ mf_seq *ms_m;
 #define curnote_(m) ((m)->curnote[(m)->curtrack])
 #define curdur_(m)  ((m)->curdur[(m)->curtrack])
 
-int16_t ms_note_(mf_seq *ms, uint16_t pitch, uint32_t dur, uint16_t vel)
+int16_t mf_seq_note(mf_seq *ms, uint16_t pitch, uint32_t dur, uint16_t vel)
 {
   int16_t ret = 0;
 
   if (!ms) return 810;
 
-  if (pitch == (uint16_t)MS_NOVAL) pitch = curnote_(ms);
-  if (dur == (uint32_t)MS_NOVAL)   dur = curdur_(ms);
-  if (vel == (uint16_t)MS_NOVAL)   vel = curvel_(ms);
+  if (pitch == (uint16_t)MF_NOVAL) pitch = curnote_(ms);
+  if (dur == (uint32_t)MF_NOVAL)   dur = curdur_(ms);
+  if (vel == (uint16_t)MF_NOVAL)   vel = curvel_(ms);
 
   _dbgmsg("NOTE: %d %d %d\n",pitch,dur,vel);
 
   if (vel > 0) {
-    mf_seq_note_on(ms, curtick_(ms), curchan_(ms), pitch, vel);
-    if (dur > 0) {
-      mf_seq_note_off(ms, curtick_(ms) + dur, curchan_(ms), pitch);
+    ret = mf_seq_note_on(ms, curtick_(ms), curchan_(ms), pitch, vel);
+    if (!ret && dur > 0) {
+      ret = mf_seq_note_off(ms, curtick_(ms) + dur, curchan_(ms), pitch);
       curdur_(ms) = dur;
     }
   }
   else 
-      mf_seq_note_off(ms, curtick_(ms), curchan_(ms), pitch);
+      ret = mf_seq_note_off(ms, curtick_(ms), curchan_(ms), pitch);
 
   return ret;
 }
 
-int16_t ms_rest_(mf_seq *ms, uint32_t dur)
+int16_t mf_seq_rest(mf_seq *ms, uint32_t dur)
 {
-  if (dur == (uint32_t)MS_NOVAL) dur = curdur_(ms);
-  if (dur>0) {
+  if (!ms) return 811;
+  if (dur == (uint32_t)MF_NOVAL) dur = curdur_(ms);
+  if (dur > 0) {
     curtick_(ms) += (curdur_(ms) = dur);
   }
   return 0;
 }
 
-int16_t ms_track_(mf_seq *ms, uint16_t trk)
+int16_t mf_seq_channel(mf_seq *ms, uint16_t chn, uint16_t track)
 {
-  if (trk < MS_MAX_TRACKS) ms->curtrack = trk;
-  return ms->curtrack;
-}
-
-int16_t ms_channel_(mf_seq *ms, uint16_t chn)
-{
-  if (chn != (uint16_t) MS_NOVAL) curchan_(ms) = chn;
+  if (!ms) return 812;
+  if (track < MF_MAX_TRACKS) ms->curtrack = track;
+  if (chn != (uint16_t)MF_NOVAL) curchan_(ms) = chn;
   return curchan_(ms);
 }
 
-uint32_t ms_setmark_(mf_seq *ms, uint32_t mrk, uint32_t tick)
+uint32_t mf_seq_set_mark(mf_seq *ms, uint32_t mrk, uint32_t tick)
 {
-  if (tick == MS_NO_TICK)
+  if (!ms) return 0;
+  if (tick == MF_NO_TICK)
     tick = ms->curtick[ms->curtrack];
-  else if (ms_markA <= tick || tick <= ms_markJ)  
+  else if (mf_markA <= tick || tick <= mf_markJ)  
     tick = ms->savtick[tick & 0x0F];
   mrk = mrk & 0x0F;
   if (mrk < 10) {
@@ -1009,15 +1083,30 @@ uint32_t ms_setmark_(mf_seq *ms, uint32_t mrk, uint32_t tick)
   return tick;
 }
 
-uint32_t ms_getmark_(mf_seq *ms, uint32_t mrk)
+uint32_t mf_seq_get_mark(mf_seq *ms, uint32_t mrk)
 {
-  uint32_t tick = ms->curtick[ms->curtrack];
+  uint32_t tick;
 
-  if (mrk == MS_NO_MARK)  mrk = ms->cursav;
+  if (!ms) return 0;
+  tick = ms->curtick[ms->curtrack];
+  if (mrk == MF_NO_MARK)  mrk = ms->cursav;
   mrk = mrk & 0x0F;
   if (mrk < 10) {
     tick = ms->savtick[mrk];
   }
   return tick;
 }
+
+uint32_t mf_seq_tick(mf_seq *ms, uint32_t mrk, uint32_t tick)
+{
+  if (!ms) return 0;
+  if (tick == MF_NO_TICK)
+    tick = ms->curtick[ms->curtrack];
+  else if (mf_markA <= tick || tick <= mf_markJ)  
+    tick = ms->savtick[tick & 0x0F];
+
+  ms->curtick[ms->curtrack] = tick;
+  return tick;
+}
+
 

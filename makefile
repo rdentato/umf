@@ -14,8 +14,9 @@ AR=ar -ru
 RM=rm -f
 LN=gcc $(LIBPATH)
 
-CFLAGS = -DDEBUG -g	
-CFLAGS = -O2 -DNDEBUG
+CFLAGS = -DDEBUG -g	-Wall
+# RELEASE Flags
+#CFLAGS = -O2 -DNDEBUG -Wall
 
 LIBOBJ=src/umf.o
 
@@ -47,7 +48,7 @@ all: $(SRC) $(TST)
 #  8""88888P'  o888o  o888o  `Y8bood8P'  
 
 src/umf.o: src/umf.h src/umf.c
-	$(CC) $(CFLAGS) $(INCPATH) -c -o $*.o $*.c
+	$(CC) $(CFLAGS_SRC) $(INCPATH) -c -o $*.o $*.c
 
 src/libumf.a : src/umf.o src/umf.h
 	$(AR) $@ $(LIBOBJ)
@@ -60,6 +61,16 @@ src/libumf.a : src/umf.o src/umf.h
 #       888       888       o oo     .d8P      888      
 #      o888o     o888ooooood8 8""88888P'      o888o                                                         
 
+test_prg=test/t_ms$(_EXE) test/t_write$(_EXE) \
+         test/t_seq$(_EXE) test/t_read$(_EXE)
+
+test/test.log: test/dbgstat$(_EXE) $(test_prg)
+	@date +"DATE: %Y/%m/%d %H:%M:%S" > test/test.log
+	@echo "Running tests"
+	@cd test ; for f in t_*; do ./$$f 2>> test.log; done; ./dbgstat < test.log;
+
+runtest: test/test.log 
+
 test/t_ms$(_EXE): src/libumf.a test/u_ms.o
 	$(LN) -o $@ test/u_ms.o -lumf
 
@@ -71,6 +82,11 @@ test/t_write$(_EXE): src/libumf.a test/u_write.o
   
 test/t_read$(_EXE): src/libumf.a test/u_read.o
 	$(LN) -o $@ test/u_read.o -lumf
+
+test/dbgstat$(_EXE): src/dbg.h
+	cp src/dbg.h test/dbgstat.c
+	$(CC) -o test/dbgstat -O2 -Wall -DDBGSTAT test/dbgstat.c
+	rm -f test/dbgstat.c
 
 #  oooooooooo.     .oooooo.     .oooooo.   
 #  `888'   `Y8b   d8P'  `Y8b   d8P'  `Y8b  
@@ -92,7 +108,7 @@ doc:
 #   `Y8bood8P'  o888ooooood8 o888ooooood8 o88o     o8888o o8o        `8  
 
 clean:
-	$(RM) test/*.log test/*.o test/ss.mid test/xx.mid
+	$(RM) test/*.log test/*.o test/??.mid
 	$(RM) test/t_*
 	$(RM) test/gmon.out
 	$(RM) src/libumf.a src/*.log src/*.o
